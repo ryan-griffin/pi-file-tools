@@ -1,0 +1,265 @@
+import {
+	chmod,
+	copyFile,
+	mkdir as fsMkdir,
+	rename as fsRename,
+	lstat,
+	mkdtemp,
+	readdir,
+	readlink,
+	rm,
+	symlink,
+} from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type Static, Type } from "typebox";
+import {
+	assertPathUnchanged,
+	canonicalPath,
+	isDirectoryPathInside,
+	isPathAncestor,
+	mutation,
+	pathExists,
+	resolveToolCwd,
+	resolveToolPath,
+	sameRealPath,
+	throwIfAborted,
+} from "../paths.js";
+
+const parameters = Type.Object(
+	{
+		source: Type.String({
+			description:
+				"Existing file, symlink, or directory to copy; a leading @ is optional.",
+			minLength: 1,
+			pattern: "^[^\\u0000-\\u001F\\u007F\\u0080-\\u009F]+$",
+		}),
+		destination: Type.String({
+			description: "Exact new path. Parent directories are not created.",
+			minLength: 1,
+			pattern: "^[^\\u0000-\\u001F\\u007F\\u0080-\\u009F]+$",
+		}),
+		recursive: Type.Optional(
+			Type.Boolean({
+				description: "Required when source is a directory. Defaults to false.",
+			}),
+		),
+		overwrite: Type.Optional(
+			Type.Boolean({
+				description:
+					"Replace an existing destination. Defaults to false; this is destructive.",
+			}),
+		),
+	},
+	{ additionalProperties: false },
+);
+type Params = Static<typeof parameters>;
+
+async function copyEntry(
+	source: string,
+	destination: string,
+	recursive: boolean,
+	signal: AbortSignal | undefined,
+): Promise<void> {
+	throwIfAborted(signal);
+	const sourceStat = await lstat(source);
+	if (sourceStat.isSymbolicLink()) {
+		const target = await readlink(source);
+		throwIfAborted(signal);
+		await symlink(target, destination);
+		return;
+	}
+	if (sourceStat.isDirectory()) {
+		if (!recursive)
+			throw new Error("copying a directory requires recursive=true");
+		throwIfAborted(signal);
+		await fsMkdir(destination);
+		for (const entry of await readdir(source)) {
+			throwIfAborted(signal);
+			await copyEntry(
+				join(source, entry),
+				join(destination, entry),
+				recursive,
+				signal,
+			);
+		}
+		throwIfAborted(signal);
+		await chmod(destination, sourceStat.mode & 0o7777);
+		return;
+	}
+	if (!sourceStat.isFile()) {
+		throw new Error(`cannot copy special filesystem entry: ${source}`);
+	}
+	throwIfAborted(signal);
+	await copyFile(source, destination);
+	throwIfAborted(signal);
+	await chmod(destination, sourceStat.mode & 0o7777);
+}
+
+function messageFor(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function combinedFailure(operation: unknown, cleanup: unknown): Error {
+	return new Error(
+		`${messageFor(operation)}; unable to clean up temporary copy: ${messageFor(cleanup)}`,
+		{ cause: operation },
+	);
+}
+
+async function cleanupTemporary(path: string): Promise<unknown> {
+	try {
+		await rm(path, { recursive: true, force: false });
+		return undefined;
+	} catch (error) {
+		return error;
+	}
+}
+
+export function registerCopy(pi: ExtensionAPI): void {
+	pi.registerTool({
+		name: "copy",
+		label: "Copy",
+		description:
+			"Copy a file, symlink, or directory to an exact destination path. Parents are not created; directories require recursive=true and existing destinations require overwrite=true.",
+		promptSnippet:
+			"Copy a file or directory; recursive and overwrite are explicit safeguards",
+		parameters,
+		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
+			const cwd = resolveToolCwd(ctx);
+			const source = resolveToolPath(params.source, cwd, "source");
+			const destination = resolveToolPath(
+				params.destination,
+				cwd,
+				"destination",
+			);
+			throwIfAborted(signal);
+			if (source === destination)
+				throw new Error("source and destination must differ");
+			const expectedSource = await canonicalPath(source);
+			const expectedDestination = await canonicalPath(destination);
+			return mutation([source, destination], cwd, async () => {
+				throwIfAborted(signal);
+				await assertPathUnchanged(source, expectedSource, "source");
+				await assertPathUnchanged(
+					destination,
+					expectedDestination,
+					"destination",
+				);
+				const sourceStat = await lstat(source);
+				if (await sameRealPath(source, destination))
+					throw new Error("source and destination must differ");
+				if (await isDirectoryPathInside(source, destination)) {
+					throw new Error("cannot copy a directory into its own descendant");
+				}
+				if (sourceStat.isDirectory() && !params.recursive) {
+					throw new Error("copying a directory requires recursive=true");
+				}
+				const destinationExists = await pathExists(destination);
+				if (
+					destinationExists &&
+					params.overwrite &&
+					(await isPathAncestor(destination, source))
+				) {
+					throw new Error("cannot overwrite an ancestor of the source");
+				}
+				if (destinationExists && !params.overwrite) {
+					throw new Error(
+						"destination already exists; set overwrite=true to replace it",
+					);
+				}
+
+				let temporaryDirectory: string | undefined;
+				let backupDirectory: string | undefined;
+				try {
+					throwIfAborted(signal);
+					temporaryDirectory = await mkdtemp(
+						join(dirname(destination), ".pi-file-tools-copy-"),
+					);
+					throwIfAborted(signal);
+					const staged = join(temporaryDirectory, basename(destination));
+					await copyEntry(source, staged, !!params.recursive, signal);
+					throwIfAborted(signal);
+
+					if (destinationExists) {
+						throwIfAborted(signal);
+						backupDirectory = await mkdtemp(
+							join(dirname(destination), ".pi-file-tools-backup-"),
+						);
+						throwIfAborted(signal);
+						const backup = join(backupDirectory, basename(destination));
+						await fsRename(destination, backup);
+						try {
+							throwIfAborted(signal);
+							await fsRename(staged, destination);
+						} catch (swapError) {
+							try {
+								await fsRename(backup, destination);
+							} catch (rollbackError) {
+								// Keep the backup in place when rollback itself fails: the old
+								// destination remains recoverable instead of being discarded.
+								backupDirectory = undefined;
+								throw new Error(
+									`${messageFor(swapError)}; rollback failed and the original destination is preserved at ${backup}: ${messageFor(rollbackError)}`,
+									{ cause: swapError },
+								);
+							}
+							throw swapError;
+						}
+					} else {
+						throwIfAborted(signal);
+						await fsRename(staged, destination);
+					}
+				} catch (error) {
+					const failedCleanupErrors = (
+						await Promise.all(
+							[temporaryDirectory, backupDirectory]
+								.filter((path): path is string => path !== undefined)
+								.map(cleanupTemporary),
+						)
+					).filter(
+						(cleanupError): cleanupError is unknown =>
+							cleanupError !== undefined,
+					);
+					if (failedCleanupErrors.length > 0)
+						throw combinedFailure(error, failedCleanupErrors[0]);
+					throw error;
+				}
+				const cleanupErrors = (
+					await Promise.all(
+						[temporaryDirectory, backupDirectory]
+							.filter((path): path is string => path !== undefined)
+							.map(cleanupTemporary),
+					)
+				).filter(
+					(cleanupError): cleanupError is unknown => cleanupError !== undefined,
+				);
+				if (cleanupErrors.length > 0) {
+					throw new Error(
+						`copy completed but unable to clean up temporary copy: ${messageFor(cleanupErrors[0])}`,
+						{ cause: cleanupErrors[0] },
+					);
+				}
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Copied ${source} to ${destination}${params.overwrite ? " (overwriting destination)" : ""}.`,
+						},
+					],
+					details: {
+						source,
+						destination,
+						recursive: params.recursive ?? false,
+						overwrite: params.overwrite ?? false,
+						kind: sourceStat.isDirectory()
+							? "directory"
+							: sourceStat.isSymbolicLink()
+								? "symlink"
+								: "file",
+					},
+				};
+			});
+		},
+	});
+}

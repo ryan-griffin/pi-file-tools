@@ -1,0 +1,40 @@
+{
+	"name": "pi-file-tools",
+	"version": "0.1.0",
+	"description": "Safe file and directory mutation tools for the pi coding agent",
+	"type": "module",
+	"main": "./src/index.ts",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"files": [
+		"src/"
+	],
+	"os": [
+		"linux"
+	],
+	"pi": {
+		"extensions": [
+			"./src/index.ts"
+		]
+	},
+	"scripts": {
+		"check": "biome check",
+		"format": "biome format --write",
+		"lint": "biome lint",
+		"typecheck": "tsc --noEmit",
+		"test": "npx tsx --test test/*.test.mjs",
+		"test:smoke": "node test/smoke.mjs",
+		"precommit": "npm run typecheck && npm run check && npm run test"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": ">=0.82.1",
+		"typebox": "*"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.6",
+		"@earendil-works/pi-coding-agent": "^0.83.0",
+		"tsx": "^4.20.3",
+		"typescript": "^6.0.3"
+	}
+}

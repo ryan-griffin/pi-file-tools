@@ -1,0 +1,26 @@
+# pi-file-tools
+
+Linux-only filesystem mutation tools for the [pi](https://github.com/earendil-works/pi-coding-agent) coding agent. The extension registers `rename`, `delete`, `copy`, and `mkdir` without shelling out.
+
+All paths are resolved relative to pi's active working directory. A leading `@` is accepted and normalized (for example, `@src/file`); empty and control-character paths are rejected (C0, DEL, and Unicode C1 controls U+0080–U+009F). Destination parents are never created implicitly. Results include readable text and structured `details`.
+
+## Tool semantics
+
+- **`rename`** moves a file, symlink, or directory to the exact destination. Existing destinations require `overwrite: true`; directory moves into their own descendants are rejected.
+- **`delete`** permanently removes a file or symlink, or an empty directory. A non-empty directory requires `recursive: true`; missing paths, the filesystem root, home directory, active working directory, and any real directory containing the home or active working directory are refused. Abort signals are checked before mutation; Node's recursive `fs.rm` cannot be cancelled safely once deletion starts.
+- **`copy`** copies a regular file, symlink, or directory to the exact destination while preserving symlinks and source permission bits. Special filesystem entries are rejected. Directories require `recursive: true`, and existing destinations require `overwrite: true`. Overwrites are staged in a temporary sibling and swapped only after the copy succeeds, preserving the old destination if staging fails. Abort signals are checked before mutation and between recursive entries.
+- **`mkdir`** creates a directory and missing parents by default (`recursive: true`). It reports whether the directory was newly created or already existed and rejects an existing non-directory.
+
+Mutations use pi's `withFileMutationQueue`; each operation acquires its lexical and canonical ancestor chains (bounded by the active cwd when applicable) in deterministic order, so source/destination and parent traversals serialize safely.
+
+## Development
+
+```bash
+npm install
+npm run typecheck
+npm run check
+npm run test
+npm run test:smoke
+npm run format
+npm run precommit
+```
