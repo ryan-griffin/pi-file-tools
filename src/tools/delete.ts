@@ -72,6 +72,10 @@ export function registerDelete(pi: ExtensionAPI): void {
 			"Delete a file, symlink, or directory. Non-empty directories require recursive: true. Deletion is permanent; the filesystem root, home directory, and active working directory are protected.",
 		promptSnippet:
 			"Delete a path; recursive: true is required for non-empty directories",
+		promptGuidelines: [
+			"Deletion is permanent; non-empty directories require recursive: true.",
+			"The filesystem root, home directory, and active working directory — and any real directory containing them — are always protected.",
+		],
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
 			return withLockedTarget(params.path, ctx, signal, async (target, cwd) => {

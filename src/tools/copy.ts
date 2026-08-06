@@ -139,6 +139,11 @@ export function registerCopy(pi: ExtensionAPI): void {
 			"Copy a file, symlink, or directory. Parent directories are not created; directory copies require recursive: true and existing destinations require overwrite: true.",
 		promptSnippet:
 			"Copy a file or directory; recursive: true for directories, overwrite: true to replace a destination",
+		promptGuidelines: [
+			"Directory sources require recursive: true; existing destinations require overwrite: true.",
+			"Symlinks and permission bits are preserved; special filesystem entries are refused.",
+			"Parent directories are never created; use mkdir first when the destination parent is missing.",
+		],
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
 			return withLockedSourceDestination(

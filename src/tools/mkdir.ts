@@ -28,6 +28,10 @@ export function registerMkdir(pi: ExtensionAPI): void {
 		description:
 			"Create a directory, creating missing parent directories by default. Reports whether the directory already existed; an existing non-directory is an error.",
 		promptSnippet: "Create a directory (recursive by default)",
+		promptGuidelines: [
+			"Creates missing parent directories by default; pass recursive: false to fail when a parent is missing.",
+			"An existing directory is reported, not an error; an existing non-directory is an error.",
+		],
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
 			return withLockedTarget(params.path, ctx, signal, async (target) => {
