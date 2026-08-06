@@ -14,13 +14,13 @@ import {
 const parameters = Type.Object(
 	{
 		path: Type.String({
-			description: "Directory path to create; a leading @ is optional.",
+			description: "Path to the directory to create (relative or absolute)",
 			minLength: 1,
 			pattern: "^[^\\u0000-\\u001F\\u007F\\u0080-\\u009F]+$",
 		}),
 		recursive: Type.Optional(
 			Type.Boolean({
-				description: "Create missing parents. Defaults to true.",
+				description: "Create missing parent directories. Defaults to true.",
 			}),
 		),
 	},
@@ -31,9 +31,9 @@ type Params = Static<typeof parameters>;
 export function registerMkdir(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "mkdir",
-		label: "Make Directory",
+		label: "mkdir",
 		description:
-			"Create a directory. recursive defaults to true and creates missing parents; an existing directory is reported as already existing, while an existing non-directory is an error.",
+			"Create a directory, creating missing parent directories by default. Reports whether the directory already existed; an existing non-directory is an error.",
 		promptSnippet: "Create a directory (recursive by default)",
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
@@ -47,7 +47,7 @@ export function registerMkdir(pi: ExtensionAPI): void {
 				if (await pathExists(target)) {
 					const stat = await lstat(target);
 					if (!stat.isDirectory())
-						throw new Error(`path exists and is not a directory: ${target}`);
+						throw new Error(`Path exists and is not a directory: ${target}.`);
 					return {
 						content: [
 							{ type: "text", text: `Directory already exists: ${target}.` },

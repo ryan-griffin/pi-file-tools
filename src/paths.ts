@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import {
@@ -22,6 +23,13 @@ function isNodeError(error: unknown, code: string): boolean {
 	);
 }
 
+/** Classify an lstat result for the details.kind field. */
+export function entryKind(stat: Stats): "file" | "directory" | "symlink" {
+	if (stat.isDirectory()) return "directory";
+	if (stat.isSymbolicLink()) return "symlink";
+	return "file";
+}
+
 /** Normalize pi's optional @ path marker and resolve against the tool cwd. */
 export function resolveToolPath(
 	value: unknown,
@@ -29,7 +37,7 @@ export function resolveToolPath(
 	name: string,
 ): string {
 	if (typeof value !== "string" || value.length === 0) {
-		throw new Error(`${name} must be a non-empty path`);
+		throw new Error(`${name} must be a non-empty path.`);
 	}
 	const normalized = value.startsWith("@") ? value.slice(1) : value;
 	if (
@@ -39,7 +47,7 @@ export function resolveToolPath(
 			return code < 32 || (code >= 127 && code <= 159);
 		})
 	) {
-		throw new Error(`${name} must not be empty or contain control characters`);
+		throw new Error(`${name} must not be empty or contain control characters.`);
 	}
 	const base = cwd && cwd.length > 0 ? cwd : process.cwd();
 	return resolve(base, normalized);
@@ -91,7 +99,7 @@ export async function assertPathUnchanged(
 		normalizeMutationKey(expectedCanonical)
 	) {
 		throw new Error(
-			`${label} changed while waiting for mutation locks; refusing to follow redirected path: ${path}`,
+			`${label.charAt(0).toUpperCase() + label.slice(1)} changed while waiting for mutation locks; refusing to follow redirected path: ${path}.`,
 		);
 	}
 }
@@ -264,7 +272,7 @@ export async function protectedDeleteReason(
 }
 
 export function throwIfAborted(signal: AbortSignal | undefined): void {
-	if (signal?.aborted) throw signal.reason ?? new Error("operation aborted");
+	if (signal?.aborted) throw new Error("Operation aborted");
 }
 
 export async function sameRealPath(

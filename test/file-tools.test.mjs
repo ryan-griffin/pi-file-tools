@@ -57,7 +57,7 @@ async function call(name, params, cwd) {
 		);
 }
 async function rejects(name, params, cwd, text) {
-	await assert.rejects(call(name, params, cwd), new RegExp(text));
+	await assert.rejects(call(name, params, cwd), new RegExp(text, "i"));
 }
 async function trySymlink(target, path) {
 	try {
@@ -336,7 +336,7 @@ test("ancestor locks prevent a queued copy from following a renamed symlink pare
 	await Promise.all([hold, rename]);
 	await assert.rejects(
 		copy,
-		/destination changed.*refusing to follow redirected path/,
+		/destination changed.*refusing to follow redirected path/i,
 	);
 	assert.equal(await readFile(join(root, "victim", "file"), "utf8"), "old");
 	assert.equal(await readlink(join(root, "dest")), "victim");
@@ -392,7 +392,7 @@ test("canonical mutation aliases settle without a queue deadlock", async () => {
 				timer.unref?.();
 			}),
 		]),
-		/source and destination must differ/,
+		/source and destination must differ/i,
 	);
 });
 
