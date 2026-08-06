@@ -2,16 +2,12 @@ import { lstat, readdir, rm, rmdir } from "node:fs/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import {
-	assertPathUnchanged,
-	canonicalPath,
 	entryKind,
 	isNodeError,
-	mutation,
 	protectedDeleteReason,
-	resolveToolCwd,
-	resolveToolPath,
 	throwIfAborted,
 } from "../paths.js";
+import { withLockedTarget } from "../shared.js";
 
 const parameters = Type.Object(
 	{
@@ -42,13 +38,7 @@ export function registerDelete(pi: ExtensionAPI): void {
 			"Delete a path; recursive: true is required for non-empty directories",
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
-			const cwd = resolveToolCwd(ctx);
-			const target = resolveToolPath(params.path, cwd, "path");
-			throwIfAborted(signal);
-			const expectedTarget = await canonicalPath(target);
-			return mutation([target], cwd, async () => {
-				throwIfAborted(signal);
-				await assertPathUnchanged(target, expectedTarget, "path");
+			return withLockedTarget(params.path, ctx, signal, async (target, cwd) => {
 				const protection = await protectedDeleteReason(target, cwd);
 				if (protection)
 					throw new Error(`Refusing to delete ${protection}: ${target}.`);

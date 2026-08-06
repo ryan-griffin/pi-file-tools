@@ -1,15 +1,8 @@
 import { mkdir as fsMkdir, lstat } from "node:fs/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
-import {
-	assertPathUnchanged,
-	canonicalPath,
-	mutation,
-	pathExists,
-	resolveToolCwd,
-	resolveToolPath,
-	throwIfAborted,
-} from "../paths.js";
+import { pathExists, throwIfAborted } from "../paths.js";
+import { withLockedTarget } from "../shared.js";
 
 const parameters = Type.Object(
 	{
@@ -37,13 +30,7 @@ export function registerMkdir(pi: ExtensionAPI): void {
 		promptSnippet: "Create a directory (recursive by default)",
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
-			const cwd = resolveToolCwd(ctx);
-			const target = resolveToolPath(params.path, cwd, "path");
-			throwIfAborted(signal);
-			const expectedTarget = await canonicalPath(target);
-			return mutation([target], cwd, async () => {
-				throwIfAborted(signal);
-				await assertPathUnchanged(target, expectedTarget, "path");
+			return withLockedTarget(params.path, ctx, signal, async (target) => {
 				if (await pathExists(target)) {
 					const stat = await lstat(target);
 					if (!stat.isDirectory())

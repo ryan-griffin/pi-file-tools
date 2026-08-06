@@ -13,20 +13,8 @@ import {
 import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
-import {
-	assertPathUnchanged,
-	canonicalPath,
-	entryKind,
-	isDirectoryPathInside,
-	isPathAncestor,
-	mutation,
-	pathExists,
-	protectedDeleteReason,
-	resolveToolCwd,
-	resolveToolPath,
-	sameRealPath,
-	throwIfAborted,
-} from "../paths.js";
+import { entryKind, throwIfAborted } from "../paths.js";
+import { withLockedSourceDestination } from "../shared.js";
 
 const parameters = Type.Object(
 	{
@@ -148,147 +136,107 @@ export function registerCopy(pi: ExtensionAPI): void {
 			"Copy a file or directory; recursive: true for directories, overwrite: true to replace a destination",
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
-			const cwd = resolveToolCwd(ctx);
-			const source = resolveToolPath(params.source, cwd, "source");
-			const destination = resolveToolPath(
-				params.destination,
-				cwd,
-				"destination",
-			);
-			throwIfAborted(signal);
-			if (source === destination)
-				throw new Error("Source and destination must differ.");
-			const expectedSource = await canonicalPath(source);
-			const expectedDestination = await canonicalPath(destination);
-			return mutation([source, destination], cwd, async () => {
-				throwIfAborted(signal);
-				await assertPathUnchanged(source, expectedSource, "source");
-				await assertPathUnchanged(
-					destination,
-					expectedDestination,
-					"destination",
-				);
-				const sourceStat = await lstat(source);
-				if (await sameRealPath(source, destination))
-					throw new Error("Source and destination must differ.");
-				if (await isDirectoryPathInside(source, destination)) {
-					throw new Error("Cannot copy a directory into its own descendant.");
-				}
-				if (sourceStat.isDirectory() && !params.recursive) {
-					throw new Error("Copying a directory requires recursive: true.");
-				}
-				const destinationExists = await pathExists(destination);
-				if (destinationExists && params.overwrite) {
-					const protection = await protectedDeleteReason(destination, cwd);
-					if (protection)
-						throw new Error(
-							`Refusing to overwrite ${protection}: ${destination}.`,
-						);
-					if (await isPathAncestor(destination, source)) {
-						throw new Error("Cannot overwrite an ancestor of the source.");
+			return withLockedSourceDestination(
+				{
+					sourceValue: params.source,
+					destinationValue: params.destination,
+					op: "copy",
+					overwrite: params.overwrite ?? false,
+					ctx,
+					signal,
+				},
+				async ({ source, destination, sourceStat, destinationExists }) => {
+					if (sourceStat.isDirectory() && !params.recursive) {
+						throw new Error("Copying a directory requires recursive: true.");
 					}
-					const destinationStat = await lstat(destination);
-					if (destinationStat.isDirectory() !== sourceStat.isDirectory()) {
-						// Same as mv -T / cp -T: replacing a directory with a file or
-						// symlink (or vice versa) would silently discard the old
-						// directory tree via backup cleanup. Refuse instead.
-						throw new Error(
-							`Refusing to overwrite a ${entryKind(destinationStat)} with a ${entryKind(sourceStat)}: ${destination}; delete or move the destination first.`,
-						);
-					}
-				}
-				if (destinationExists && !params.overwrite) {
-					throw new Error(
-						"Destination already exists; set overwrite: true to replace it.",
-					);
-				}
 
-				let temporaryDirectory: string | undefined;
-				let backupDirectory: string | undefined;
-				try {
-					throwIfAborted(signal);
-					temporaryDirectory = await mkdtemp(
-						join(dirname(destination), ".pi-file-tools-copy-"),
-					);
-					throwIfAborted(signal);
-					const staged = join(temporaryDirectory, basename(destination));
-					await copyEntry(source, staged, !!params.recursive, signal);
-					throwIfAborted(signal);
-
-					if (destinationExists) {
+					let temporaryDirectory: string | undefined;
+					let backupDirectory: string | undefined;
+					try {
 						throwIfAborted(signal);
-						backupDirectory = await mkdtemp(
-							join(dirname(destination), ".pi-file-tools-backup-"),
+						temporaryDirectory = await mkdtemp(
+							join(dirname(destination), ".pi-file-tools-copy-"),
 						);
 						throwIfAborted(signal);
-						const backup = join(backupDirectory, basename(destination));
-						await fsRename(destination, backup);
-						try {
+						const staged = join(temporaryDirectory, basename(destination));
+						await copyEntry(source, staged, params.recursive ?? false, signal);
+						throwIfAborted(signal);
+
+						if (destinationExists) {
+							throwIfAborted(signal);
+							backupDirectory = await mkdtemp(
+								join(dirname(destination), ".pi-file-tools-backup-"),
+							);
+							throwIfAborted(signal);
+							const backup = join(backupDirectory, basename(destination));
+							await fsRename(destination, backup);
+							try {
+								throwIfAborted(signal);
+								await fsRename(staged, destination);
+							} catch (swapError) {
+								try {
+									await fsRename(backup, destination);
+								} catch (rollbackError) {
+									// Keep the backup in place when rollback itself fails: the old
+									// destination remains recoverable instead of being discarded.
+									backupDirectory = undefined;
+									throw new Error(
+										`${messageFor(swapError)}; rollback failed and the original destination is preserved at ${backup}: ${messageFor(rollbackError)}.`,
+										{ cause: swapError },
+									);
+								}
+								throw swapError;
+							}
+						} else {
 							throwIfAborted(signal);
 							await fsRename(staged, destination);
-						} catch (swapError) {
-							try {
-								await fsRename(backup, destination);
-							} catch (rollbackError) {
-								// Keep the backup in place when rollback itself fails: the old
-								// destination remains recoverable instead of being discarded.
-								backupDirectory = undefined;
-								throw new Error(
-									`${messageFor(swapError)}; rollback failed and the original destination is preserved at ${backup}: ${messageFor(rollbackError)}.`,
-									{ cause: swapError },
-								);
-							}
-							throw swapError;
 						}
-					} else {
-						throwIfAborted(signal);
-						await fsRename(staged, destination);
+					} catch (error) {
+						const cleanupResults = await cleanupTemporaryPaths([
+							temporaryDirectory,
+							backupDirectory,
+						]);
+						const failedCleanups = cleanupResults.filter(
+							(failure) => failure.error !== undefined,
+						);
+						if (failedCleanups.length > 0) {
+							throw combinedFailure(
+								error,
+								describeCleanupFailures(failedCleanups),
+							);
+						}
+						throw error;
 					}
-				} catch (error) {
 					const cleanupResults = await cleanupTemporaryPaths([
 						temporaryDirectory,
 						backupDirectory,
 					]);
-					const failedCleanups = cleanupResults.filter(
+					const cleanupFailures = cleanupResults.filter(
 						(failure) => failure.error !== undefined,
 					);
-					if (failedCleanups.length > 0) {
-						throw combinedFailure(
-							error,
-							describeCleanupFailures(failedCleanups),
+					if (cleanupFailures.length > 0) {
+						throw new Error(
+							`Copy completed but the temporary copy could not be cleaned up: ${describeCleanupFailures(cleanupFailures)}.`,
+							{ cause: cleanupFailures[0]?.error },
 						);
 					}
-					throw error;
-				}
-				const cleanupResults = await cleanupTemporaryPaths([
-					temporaryDirectory,
-					backupDirectory,
-				]);
-				const cleanupFailures = cleanupResults.filter(
-					(failure) => failure.error !== undefined,
-				);
-				if (cleanupFailures.length > 0) {
-					throw new Error(
-						`Copy completed but the temporary copy could not be cleaned up: ${describeCleanupFailures(cleanupFailures)}.`,
-						{ cause: cleanupFailures[0]?.error },
-					);
-				}
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Copied ${source} to ${destination}${destinationExists ? " (overwriting destination)" : ""}.`,
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Copied ${source} to ${destination}${destinationExists ? " (overwriting destination)" : ""}.`,
+							},
+						],
+						details: {
+							source,
+							destination,
+							recursive: params.recursive ?? false,
+							overwrite: params.overwrite ?? false,
+							kind: entryKind(sourceStat),
 						},
-					],
-					details: {
-						source,
-						destination,
-						recursive: params.recursive ?? false,
-						overwrite: params.overwrite ?? false,
-						kind: entryKind(sourceStat),
-					},
-				};
-			});
+					};
+				},
+			);
 		},
 	});
 }

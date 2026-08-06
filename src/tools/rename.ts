@@ -1,21 +1,9 @@
-import { rename as fsRename, lstat, mkdtemp, rm } from "node:fs/promises";
+import { rename as fsRename, mkdtemp, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
-import {
-	assertPathUnchanged,
-	canonicalPath,
-	entryKind,
-	isDirectoryPathInside,
-	isPathAncestor,
-	mutation,
-	pathExists,
-	protectedDeleteReason,
-	resolveToolCwd,
-	resolveToolPath,
-	sameRealPath,
-	throwIfAborted,
-} from "../paths.js";
+import { entryKind, throwIfAborted } from "../paths.js";
+import { withLockedSourceDestination } from "../shared.js";
 
 const parameters = Type.Object(
 	{
@@ -117,79 +105,39 @@ export function registerRename(pi: ExtensionAPI): void {
 			"Rename or move a file or directory; overwrite: true is required to replace a destination",
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
-			const cwd = resolveToolCwd(ctx);
-			const source = resolveToolPath(params.source, cwd, "source");
-			const destination = resolveToolPath(
-				params.destination,
-				cwd,
-				"destination",
-			);
-			throwIfAborted(signal);
-			if (source === destination)
-				throw new Error("Source and destination must differ.");
-			const expectedSource = await canonicalPath(source);
-			const expectedDestination = await canonicalPath(destination);
-			return mutation([source, destination], cwd, async () => {
-				throwIfAborted(signal);
-				await assertPathUnchanged(source, expectedSource, "source");
-				await assertPathUnchanged(
-					destination,
-					expectedDestination,
-					"destination",
-				);
-				const sourceStat = await lstat(source);
-				if (await sameRealPath(source, destination))
-					throw new Error("Source and destination must differ.");
-				if (await isDirectoryPathInside(source, destination)) {
-					throw new Error("Cannot move a directory into its own descendant.");
-				}
-				const destinationExists = await pathExists(destination);
-				if (destinationExists && params.overwrite) {
-					const protection = await protectedDeleteReason(destination, cwd);
-					if (protection)
-						throw new Error(
-							`Refusing to overwrite ${protection}: ${destination}.`,
-						);
-					if (await isPathAncestor(destination, source)) {
-						throw new Error("Cannot overwrite an ancestor of the source.");
-					}
-					const destinationStat = await lstat(destination);
-					if (destinationStat.isDirectory() !== sourceStat.isDirectory()) {
-						// Same as mv -T / cp -T: replacing a directory with a file or
-						// symlink (or vice versa) would silently discard the old
-						// directory tree via backup cleanup. Refuse instead.
-						throw new Error(
-							`Refusing to overwrite a ${entryKind(destinationStat)} with a ${entryKind(sourceStat)}: ${destination}; delete or move the destination first.`,
-						);
-					}
-				}
-				if (destinationExists && !params.overwrite) {
-					throw new Error(
-						"Destination already exists; set overwrite: true to replace it.",
-					);
-				}
-				throwIfAborted(signal);
-				await renameWithOverwrite(
-					source,
-					destination,
-					destinationExists,
+			return withLockedSourceDestination(
+				{
+					sourceValue: params.source,
+					destinationValue: params.destination,
+					op: "move",
+					overwrite: params.overwrite ?? false,
+					ctx,
 					signal,
-				);
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Renamed ${source} to ${destination}${destinationExists ? " (overwriting destination)" : ""}.`,
-						},
-					],
-					details: {
+				},
+				async ({ source, destination, sourceStat, destinationExists }) => {
+					throwIfAborted(signal);
+					await renameWithOverwrite(
 						source,
 						destination,
-						overwrite: params.overwrite ?? false,
-						kind: entryKind(sourceStat),
-					},
-				};
-			});
+						destinationExists,
+						signal,
+					);
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Renamed ${source} to ${destination}${destinationExists ? " (overwriting destination)" : ""}.`,
+							},
+						],
+						details: {
+							source,
+							destination,
+							overwrite: params.overwrite ?? false,
+							kind: entryKind(sourceStat),
+						},
+					};
+				},
+			);
 		},
 	});
 }
