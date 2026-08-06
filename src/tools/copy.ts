@@ -168,6 +168,15 @@ export function registerCopy(pi: ExtensionAPI): void {
 					if (await isPathAncestor(destination, source)) {
 						throw new Error("Cannot overwrite an ancestor of the source.");
 					}
+					const destinationStat = await lstat(destination);
+					if (destinationStat.isDirectory() !== sourceStat.isDirectory()) {
+						// Same as mv -T / cp -T: replacing a directory with a file or
+						// symlink (or vice versa) would silently discard the old
+						// directory tree via backup cleanup. Refuse instead.
+						throw new Error(
+							`Refusing to overwrite a ${entryKind(destinationStat)} with a ${entryKind(sourceStat)}: ${destination}; delete or move the destination first.`,
+						);
+					}
 				}
 				if (destinationExists && !params.overwrite) {
 					throw new Error(

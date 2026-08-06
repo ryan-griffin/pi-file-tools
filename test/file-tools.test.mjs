@@ -476,6 +476,84 @@ test("rename and copy refuse to overwrite protected destinations", async () => {
 	}
 });
 
+test("rename and copy refuse kind-mismatched overwrites", async () => {
+	const root = await tempRoot();
+	await writeFile(join(root, "file"), "file");
+	await mkdir(join(root, "dir"));
+	await writeFile(join(root, "dir", "precious"), "precious");
+	const hasLinks = await trySymlink("file", join(root, "link"));
+
+	// File over directory (and symlink over directory).
+	await rejects(
+		"rename",
+		{ source: "file", destination: "dir", overwrite: true },
+		root,
+		"directory with a file",
+	);
+	await rejects(
+		"copy",
+		{ source: "file", destination: "dir", overwrite: true },
+		root,
+		"directory with a file",
+	);
+	if (hasLinks) {
+		await rejects(
+			"rename",
+			{ source: "link", destination: "dir", overwrite: true },
+			root,
+			"directory with a symlink",
+		);
+	}
+	// Directory over a file.
+	await rejects(
+		"rename",
+		{ source: "dir", destination: "file", overwrite: true },
+		root,
+		"file with a directory",
+	);
+	await rejects(
+		"copy",
+		{
+			source: "dir",
+			destination: "file",
+			recursive: true,
+			overwrite: true,
+		},
+		root,
+		"file with a directory",
+	);
+
+	// Refusals leave both sides intact.
+	assert.equal(await readFile(join(root, "file"), "utf8"), "file");
+	assert.equal(await readFile(join(root, "dir", "precious"), "utf8"), "precious");
+
+	// Same-kind replacement still works: directory over directory replaces
+	// the old tree wholesale with the new one.
+	await mkdir(join(root, "other"));
+	await writeFile(join(root, "other", "new"), "new");
+	await call(
+		"rename",
+		{ source: "other", destination: "dir", overwrite: true },
+		root,
+	);
+	assert.equal(await readFile(join(root, "dir", "new"), "utf8"), "new");
+	assert.equal(
+		await readFile(join(root, "dir", "precious"), "utf8").catch(() => null),
+		null,
+	);
+
+	// A symlink can still replace an unrelated file.
+	if (hasLinks) {
+		await writeFile(join(root, "other-file"), "other");
+		await call(
+			"rename",
+			{ source: "link", destination: "other-file", overwrite: true },
+			root,
+		);
+		assert.equal((await lstat(join(root, "other-file"))).isSymbolicLink(), true);
+	}
+});
+
 test("copy staging preserves an existing destination when a socket cannot be copied", async () => {
 	const root = await tempRoot();
 	await mkdir(join(root, "source"));
