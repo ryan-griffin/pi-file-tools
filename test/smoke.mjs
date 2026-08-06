@@ -11,6 +11,7 @@ const sourceFiles = [
 	"src/tools/delete.ts",
 	"src/tools/copy.ts",
 	"src/tools/mkdir.ts",
+	"src/shared.ts",
 ];
 function readSource(file) {
 	try {
