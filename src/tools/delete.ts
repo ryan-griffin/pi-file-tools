@@ -4,6 +4,7 @@ import { type Static, Type } from "typebox";
 import {
 	assertPathUnchanged,
 	canonicalPath,
+	entryKind,
 	mutation,
 	protectedDeleteReason,
 	resolveToolCwd,
@@ -15,14 +16,14 @@ const parameters = Type.Object(
 	{
 		path: Type.String({
 			description:
-				"File, symlink, or directory to delete; a leading @ is optional.",
+				"Path to the file, symlink, or directory to delete (relative or absolute)",
 			minLength: 1,
 			pattern: "^[^\\u0000-\\u001F\\u007F\\u0080-\\u009F]+$",
 		}),
 		recursive: Type.Optional(
 			Type.Boolean({
 				description:
-					"Required for non-empty directories. Defaults to false; deletion is permanent.",
+					"Delete a non-empty directory recursively. Defaults to false.",
 			}),
 		),
 	},
@@ -33,11 +34,11 @@ type Params = Static<typeof parameters>;
 export function registerDelete(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "delete",
-		label: "Delete",
+		label: "delete",
 		description:
-			"Permanently delete a file, symlink, or directory. Non-empty directories require recursive=true; missing paths are errors. The filesystem root, home directory, and active cwd are protected.",
+			"Delete a file, symlink, or directory. Non-empty directories require recursive: true. Deletion is permanent; the filesystem root, home directory, and active working directory are protected.",
 		promptSnippet:
-			"Permanently delete a path; recursive is required for non-empty directories",
+			"Delete a path; recursive: true is required for non-empty directories",
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
 			const cwd = resolveToolCwd(ctx);
@@ -49,14 +50,14 @@ export function registerDelete(pi: ExtensionAPI): void {
 				await assertPathUnchanged(target, expectedTarget, "path");
 				const protection = await protectedDeleteReason(target, cwd);
 				if (protection)
-					throw new Error(`refusing to delete ${protection}: ${target}`);
+					throw new Error(`Refusing to delete ${protection}: ${target}.`);
 				const stat = await lstat(target);
 				const isDirectory = stat.isDirectory();
 				if (isDirectory && !params.recursive) {
 					const entries = await readdir(target);
 					if (entries.length > 0)
 						throw new Error(
-							"directory is not empty; set recursive=true to delete it",
+							"Directory is not empty; set recursive: true to delete it.",
 						);
 				}
 				throwIfAborted(signal);
@@ -77,7 +78,7 @@ export function registerDelete(pi: ExtensionAPI): void {
 					details: {
 						path: target,
 						recursive: params.recursive ?? false,
-						kind: isDirectory ? "directory" : "file-or-link",
+						kind: entryKind(stat),
 					},
 				};
 			});

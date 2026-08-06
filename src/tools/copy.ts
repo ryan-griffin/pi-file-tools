@@ -16,6 +16,7 @@ import { type Static, Type } from "typebox";
 import {
 	assertPathUnchanged,
 	canonicalPath,
+	entryKind,
 	isDirectoryPathInside,
 	isPathAncestor,
 	mutation,
@@ -30,24 +31,25 @@ const parameters = Type.Object(
 	{
 		source: Type.String({
 			description:
-				"Existing file, symlink, or directory to copy; a leading @ is optional.",
+				"Path to the file, symlink, or directory to copy (relative or absolute)",
 			minLength: 1,
 			pattern: "^[^\\u0000-\\u001F\\u007F\\u0080-\\u009F]+$",
 		}),
 		destination: Type.String({
-			description: "Exact new path. Parent directories are not created.",
+			description:
+				"Destination path for the copy (relative or absolute). Parent directories are not created.",
 			minLength: 1,
 			pattern: "^[^\\u0000-\\u001F\\u007F\\u0080-\\u009F]+$",
 		}),
 		recursive: Type.Optional(
 			Type.Boolean({
-				description: "Required when source is a directory. Defaults to false.",
+				description:
+					"Copy directories recursively. Required for directory sources. Defaults to false.",
 			}),
 		),
 		overwrite: Type.Optional(
 			Type.Boolean({
-				description:
-					"Replace an existing destination. Defaults to false; this is destructive.",
+				description: "Replace an existing destination. Defaults to false.",
 			}),
 		),
 	},
@@ -71,7 +73,7 @@ async function copyEntry(
 	}
 	if (sourceStat.isDirectory()) {
 		if (!recursive)
-			throw new Error("copying a directory requires recursive=true");
+			throw new Error("Copying a directory requires recursive: true.");
 		throwIfAborted(signal);
 		await fsMkdir(destination);
 		for (const entry of await readdir(source)) {
@@ -88,7 +90,7 @@ async function copyEntry(
 		return;
 	}
 	if (!sourceStat.isFile()) {
-		throw new Error(`cannot copy special filesystem entry: ${source}`);
+		throw new Error(`Cannot copy special filesystem entry: ${source}.`);
 	}
 	throwIfAborted(signal);
 	await copyFile(source, destination);
@@ -102,7 +104,7 @@ function messageFor(error: unknown): string {
 
 function combinedFailure(operation: unknown, cleanup: unknown): Error {
 	return new Error(
-		`${messageFor(operation)}; unable to clean up temporary copy: ${messageFor(cleanup)}`,
+		`${messageFor(operation)}; unable to clean up temporary copy: ${messageFor(cleanup)}.`,
 		{ cause: operation },
 	);
 }
@@ -119,11 +121,11 @@ async function cleanupTemporary(path: string): Promise<unknown> {
 export function registerCopy(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "copy",
-		label: "Copy",
+		label: "copy",
 		description:
-			"Copy a file, symlink, or directory to an exact destination path. Parents are not created; directories require recursive=true and existing destinations require overwrite=true.",
+			"Copy a file, symlink, or directory. Parent directories are not created; directory copies require recursive: true and existing destinations require overwrite: true.",
 		promptSnippet:
-			"Copy a file or directory; recursive and overwrite are explicit safeguards",
+			"Copy a file or directory; recursive: true for directories, overwrite: true to replace a destination",
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
 			const cwd = resolveToolCwd(ctx);
@@ -135,7 +137,7 @@ export function registerCopy(pi: ExtensionAPI): void {
 			);
 			throwIfAborted(signal);
 			if (source === destination)
-				throw new Error("source and destination must differ");
+				throw new Error("Source and destination must differ.");
 			const expectedSource = await canonicalPath(source);
 			const expectedDestination = await canonicalPath(destination);
 			return mutation([source, destination], cwd, async () => {
@@ -148,12 +150,12 @@ export function registerCopy(pi: ExtensionAPI): void {
 				);
 				const sourceStat = await lstat(source);
 				if (await sameRealPath(source, destination))
-					throw new Error("source and destination must differ");
+					throw new Error("Source and destination must differ.");
 				if (await isDirectoryPathInside(source, destination)) {
-					throw new Error("cannot copy a directory into its own descendant");
+					throw new Error("Cannot copy a directory into its own descendant.");
 				}
 				if (sourceStat.isDirectory() && !params.recursive) {
-					throw new Error("copying a directory requires recursive=true");
+					throw new Error("Copying a directory requires recursive: true.");
 				}
 				const destinationExists = await pathExists(destination);
 				if (
@@ -161,11 +163,11 @@ export function registerCopy(pi: ExtensionAPI): void {
 					params.overwrite &&
 					(await isPathAncestor(destination, source))
 				) {
-					throw new Error("cannot overwrite an ancestor of the source");
+					throw new Error("Cannot overwrite an ancestor of the source.");
 				}
 				if (destinationExists && !params.overwrite) {
 					throw new Error(
-						"destination already exists; set overwrite=true to replace it",
+						"Destination already exists; set overwrite: true to replace it.",
 					);
 				}
 
@@ -200,7 +202,7 @@ export function registerCopy(pi: ExtensionAPI): void {
 								// destination remains recoverable instead of being discarded.
 								backupDirectory = undefined;
 								throw new Error(
-									`${messageFor(swapError)}; rollback failed and the original destination is preserved at ${backup}: ${messageFor(rollbackError)}`,
+									`${messageFor(swapError)}; rollback failed and the original destination is preserved at ${backup}: ${messageFor(rollbackError)}.`,
 									{ cause: swapError },
 								);
 							}
@@ -236,7 +238,7 @@ export function registerCopy(pi: ExtensionAPI): void {
 				);
 				if (cleanupErrors.length > 0) {
 					throw new Error(
-						`copy completed but unable to clean up temporary copy: ${messageFor(cleanupErrors[0])}`,
+						`Copy completed but the temporary copy could not be cleaned up: ${messageFor(cleanupErrors[0])}.`,
 						{ cause: cleanupErrors[0] },
 					);
 				}
@@ -252,11 +254,7 @@ export function registerCopy(pi: ExtensionAPI): void {
 						destination,
 						recursive: params.recursive ?? false,
 						overwrite: params.overwrite ?? false,
-						kind: sourceStat.isDirectory()
-							? "directory"
-							: sourceStat.isSymbolicLink()
-								? "symlink"
-								: "file",
+						kind: entryKind(sourceStat),
 					},
 				};
 			});
