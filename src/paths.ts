@@ -150,6 +150,17 @@ function ancestorChain(path: string, boundary: string): string[] {
 	}
 }
 
+/** Resolve a path exactly as withFileMutationQueue keys its queue. */
+async function mutationQueueKey(path: string): Promise<string> {
+	try {
+		return await realpath(resolve(path));
+	} catch (error) {
+		if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR"))
+			return resolve(path);
+		throw error;
+	}
+}
+
 export async function mutation<T>(
 	paths: string[],
 	activeCwd: string,
@@ -171,13 +182,30 @@ export async function mutation<T>(
 	const ordered = [...new Set(lockKeys.map(normalizeMutationKey))].sort(
 		(a, b) => (a < b ? -1 : a > b ? 1 : 0),
 	);
-	const acquire = async (index: number): Promise<T> => {
+	const acquire = async (
+		index: number,
+		acquired: ReadonlyMap<string, string>,
+	): Promise<T> => {
 		if (index === ordered.length) return fn();
-		return withFileMutationQueue(ordered[index] as string, () =>
-			acquire(index + 1),
-		);
+		const key = ordered[index] as string;
+		// withFileMutationQueue re-resolves each key with its own realpath
+		// (lexical fallback for missing paths). If a concurrent mutation
+		// redirected a parent after the keys were computed, two distinct keys
+		// can converge on one queue slot; acquiring them nested would then
+		// wait on our own slot for the shared path and hang forever. Detect
+		// the convergence immediately before acquiring and fail explicitly.
+		const effective = await mutationQueueKey(key);
+		const previous = acquired.get(effective);
+		if (previous !== undefined) {
+			throw new Error(
+				`Mutation lock paths ${previous} and ${key} converged while waiting for mutation locks; refusing to deadlock: ${effective}.`,
+			);
+		}
+		const nextAcquired = new Map(acquired);
+		nextAcquired.set(effective, key);
+		return withFileMutationQueue(key, () => acquire(index + 1, nextAcquired));
 	};
-	return acquire(0);
+	return acquire(0, new Map());
 }
 
 function isPathInside(source: string, destination: string): boolean {
@@ -287,5 +315,3 @@ export async function sameRealPath(
 		throw error;
 	}
 }
-
-export { isNodeError };

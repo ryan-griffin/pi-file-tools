@@ -11,7 +11,7 @@ All paths are resolved relative to pi's active working directory. A leading `@` 
 - **`copy`** copies a regular file, symlink, or directory to the exact destination while preserving symlinks and source permission bits. Special filesystem entries are rejected. Directories require `recursive: true`, and existing destinations require `overwrite: true` (refused for the same protected destinations and kind-mismatched replacements as `rename`). Overwrites are staged in a temporary sibling and swapped only after the copy succeeds, preserving the old destination if staging fails. Abort signals are checked before mutation and between recursive entries.
 - **`mkdir`** creates a directory and missing parents by default (`recursive: true`). It reports whether the directory was newly created or already existed and rejects an existing non-directory.
 
-Mutations use pi's `withFileMutationQueue`; each operation acquires its lexical and canonical ancestor chains (bounded by the active cwd when applicable) in deterministic order, so source/destination and parent traversals serialize safely.
+Mutations use pi's `withFileMutationQueue`; each operation acquires its lexical and canonical ancestor chains (bounded by the active cwd when applicable) in deterministic order, so source/destination and parent traversals serialize safely. Lock keys are re-resolved as they are acquired; if a concurrent mutation redirects a parent so two keys converge on one queue slot, the operation fails explicitly instead of deadlocking.
 
 ## Development
 
