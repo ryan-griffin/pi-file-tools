@@ -28,6 +28,42 @@ const parameters = Type.Object(
 );
 type Params = Static<typeof parameters>;
 
+/**
+ * Remove a directory with the empty-required policy enforced by delete:
+ * refuse non-empty directories, tolerate unreadable ones (rmdir needs only
+ * write+execute on the parent, not read on the directory itself), and map a
+ * racy ENOTEMPTY (or EEXIST) back to the tool's own wording.
+ */
+async function removeEmptyDirectory(target: string): Promise<void> {
+	let entries: string[] | undefined;
+	try {
+		entries = await readdir(target);
+	} catch (error) {
+		// An unreadable directory may still be deletable: rmdir needs only
+		// write+execute on the parent, not read on the directory itself.
+		// Fall through and let rmdir give the final answer.
+		if (!isNodeError(error, "EACCES") && !isNodeError(error, "EPERM"))
+			throw error;
+	}
+	if (entries !== undefined && entries.length > 0) {
+		throw new Error(
+			"Directory is not empty; set recursive: true to delete it.",
+		);
+	}
+	try {
+		await rmdir(target);
+	} catch (error) {
+		// Either readdir raced with a concurrent write, or the empty check was
+		// skipped for an unreadable directory. Keep the tool's own wording
+		// instead of the raw kernel error.
+		if (isNodeError(error, "ENOTEMPTY") || isNodeError(error, "EEXIST"))
+			throw new Error(
+				"Directory is not empty; set recursive: true to delete it.",
+			);
+		throw error;
+	}
+}
+
 export function registerDelete(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "delete",
@@ -44,36 +80,9 @@ export function registerDelete(pi: ExtensionAPI): void {
 					throw new Error(`Refusing to delete ${protection}: ${target}.`);
 				const stat = await lstat(target);
 				const isDirectory = stat.isDirectory();
-				if (isDirectory && !params.recursive) {
-					let entries: string[] | undefined;
-					try {
-						entries = await readdir(target);
-					} catch (error) {
-						// An unreadable directory may still be deletable: rmdir needs
-						// only write+execute on the parent, not read on the directory
-						// itself. Fall through and let rmdir give the final answer.
-						if (!isNodeError(error, "EACCES") && !isNodeError(error, "EPERM"))
-							throw error;
-					}
-					if (entries !== undefined && entries.length > 0)
-						throw new Error(
-							"Directory is not empty; set recursive: true to delete it.",
-						);
-				}
 				throwIfAborted(signal);
 				if (isDirectory && !params.recursive) {
-					try {
-						await rmdir(target);
-					} catch (error) {
-						// Either readdir raced with a concurrent write, or the empty
-						// check was skipped for an unreadable directory. Keep the
-						// tool's own wording instead of the raw kernel error.
-						if (isNodeError(error, "ENOTEMPTY") || isNodeError(error, "EEXIST"))
-							throw new Error(
-								"Directory is not empty; set recursive: true to delete it.",
-							);
-						throw error;
-					}
+					await removeEmptyDirectory(target);
 				} else {
 					// fs.rm does not currently accept an AbortSignal. Check before the
 					// irreversible operation rather than attempting unsafe partial deletion.

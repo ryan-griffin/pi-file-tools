@@ -224,7 +224,8 @@ export async function isDirectoryPathInside(
 ): Promise<boolean> {
 	const sourceTarget = await canonicalPath(source);
 	try {
-		if (!(await lstat(sourceTarget)).isDirectory()) return false;
+		const sourceStat = await lstat(sourceTarget);
+		if (!sourceStat.isDirectory()) return false;
 	} catch (error) {
 		if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR"))
 			return false;
@@ -244,6 +245,34 @@ export async function isPathAncestor(
 	);
 }
 
+/** Resolve to a real path, treating a missing path as undefined. */
+async function realpathOrUndefined(path: string): Promise<string | undefined> {
+	try {
+		return await realpath(path);
+	} catch (error) {
+		if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR"))
+			return undefined;
+		throw error;
+	}
+}
+
+/**
+ * Protection label when the target's real path is a boundary's real path
+ * itself, or lies inside it (making the target an ancestor of the boundary).
+ */
+function realBoundaryProtection(
+	targetReal: string,
+	boundaryReal: string | undefined,
+	boundaryLabel: string,
+): string | undefined {
+	if (boundaryReal === undefined) return undefined;
+	if (targetReal === boundaryReal) return boundaryLabel;
+	if (isPathInside(targetReal, boundaryReal)) {
+		return `an ancestor of ${boundaryLabel}`;
+	}
+	return undefined;
+}
+
 export async function protectedDeleteReason(
 	path: string,
 	activeCwd: string,
@@ -258,7 +287,8 @@ export async function protectedDeleteReason(
 	// the directory it points to (including when that directory is cwd or home).
 	let targetIsLink = false;
 	try {
-		targetIsLink = (await lstat(target)).isSymbolicLink();
+		const targetStat = await lstat(target);
+		targetIsLink = targetStat.isSymbolicLink();
 	} catch (error) {
 		if (!isNodeError(error, "ENOENT") && !isNodeError(error, "ENOTDIR"))
 			throw error;
@@ -272,26 +302,18 @@ export async function protectedDeleteReason(
 
 	try {
 		const targetReal = await realpath(target);
-		const cwdReal = await realpath(cwd).catch((error: unknown) => {
-			if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR"))
-				return undefined;
-			throw error;
-		});
-		if (cwdReal) {
-			if (targetReal === cwdReal) return "the active working directory";
-			if (isPathInside(targetReal, cwdReal))
-				return "an ancestor of the active working directory";
-		}
-		const homeReal = await realpath(home).catch((error: unknown) => {
-			if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR"))
-				return undefined;
-			throw error;
-		});
-		if (homeReal) {
-			if (targetReal === homeReal) return "the home directory";
-			if (isPathInside(targetReal, homeReal))
-				return "an ancestor of the home directory";
-		}
+		return (
+			realBoundaryProtection(
+				targetReal,
+				await realpathOrUndefined(cwd),
+				"the active working directory",
+			) ??
+			realBoundaryProtection(
+				targetReal,
+				await realpathOrUndefined(home),
+				"the home directory",
+			)
+		);
 	} catch (error) {
 		if (!isNodeError(error, "ENOENT") && !isNodeError(error, "ENOTDIR"))
 			throw error;
