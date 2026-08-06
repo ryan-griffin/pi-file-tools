@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
 	chmod,
+	lstat,
 	mkdir,
 	mkdtemp,
 	readFile,
@@ -402,6 +403,77 @@ test("active cwd protection follows real paths but permits unlinking its alias",
 	if (!(await trySymlink(root, cwdAlias))) return;
 	await rejects("delete", { path: root }, cwdAlias, "active working directory");
 	await call("delete", { path: "cwd-alias" }, root);
+});
+
+test("rename and copy refuse to overwrite protected destinations", async () => {
+	const root = await tempRoot();
+	const cwd = join(root, "cwd");
+	const source = join(root, "source");
+	await mkdir(cwd, { recursive: true });
+	await writeFile(source, "x");
+	await writeFile(join(cwd, "work"), "work");
+
+	// The active working directory itself.
+	await rejects(
+		"rename",
+		{ source, destination: cwd, overwrite: true },
+		cwd,
+		"active working directory",
+	);
+	await rejects(
+		"copy",
+		{ source, destination: cwd, overwrite: true },
+		cwd,
+		"active working directory",
+	);
+	// An ancestor holding the active working directory.
+	await rejects(
+		"rename",
+		{ source, destination: root, overwrite: true },
+		cwd,
+		"ancestor",
+	);
+	await rejects(
+		"copy",
+		{ source, destination: root, overwrite: true },
+		cwd,
+		"ancestor",
+	);
+	// The home directory and an ancestor of it.
+	await rejects(
+		"rename",
+		{ source, destination: homedir(), overwrite: true },
+		root,
+		"home directory",
+	);
+	await rejects(
+		"copy",
+		{ source, destination: homedir(), overwrite: true },
+		root,
+		"home directory",
+	);
+	await rejects(
+		"rename",
+		{ source, destination: join(homedir(), ".."), overwrite: true },
+		root,
+		"ancestor of the home",
+	);
+	// Refusals leave both the source and the protected destination untouched.
+	assert.equal(await readFile(source, "utf8"), "x");
+	assert.equal(await readFile(join(cwd, "work"), "utf8"), "work");
+
+	// Overwriting a symlink that points at the active cwd stays allowed: the
+	// swap replaces the link only, leaving the real directory intact.
+	const cwdAlias = join(root, "cwd-alias");
+	if (await trySymlink(cwd, cwdAlias)) {
+		await call(
+			"rename",
+			{ source, destination: cwdAlias, overwrite: true },
+			root,
+		);
+		assert.equal(await readFile(join(cwd, "work"), "utf8"), "work");
+		assert.equal((await lstat(cwdAlias)).isFile(), true);
+	}
 });
 
 test("copy staging preserves an existing destination when a socket cannot be copied", async () => {

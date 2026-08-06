@@ -10,6 +10,7 @@ import {
 	isPathAncestor,
 	mutation,
 	pathExists,
+	protectedDeleteReason,
 	resolveToolCwd,
 	resolveToolPath,
 	sameRealPath,
@@ -143,12 +144,15 @@ export function registerRename(pi: ExtensionAPI): void {
 					throw new Error("Cannot move a directory into its own descendant.");
 				}
 				const destinationExists = await pathExists(destination);
-				if (
-					destinationExists &&
-					params.overwrite &&
-					(await isPathAncestor(destination, source))
-				) {
-					throw new Error("Cannot overwrite an ancestor of the source.");
+				if (destinationExists && params.overwrite) {
+					const protection = await protectedDeleteReason(destination, cwd);
+					if (protection)
+						throw new Error(
+							`Refusing to overwrite ${protection}: ${destination}.`,
+						);
+					if (await isPathAncestor(destination, source)) {
+						throw new Error("Cannot overwrite an ancestor of the source.");
+					}
 				}
 				if (destinationExists && !params.overwrite) {
 					throw new Error(
