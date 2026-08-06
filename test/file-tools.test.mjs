@@ -397,6 +397,53 @@ test("canonical mutation aliases settle without a queue deadlock", async () => {
 	);
 });
 
+test("converged lock keys fail cleanly instead of deadlocking", async () => {
+	const root = await tempRoot();
+	await mkdir(join(root, "a"));
+	await mkdir(join(root, "b"));
+	await writeFile(join(root, "a", "x"), "x");
+	await writeFile(join(root, "b", "y"), "y");
+	if (!(await trySymlink("b", join(root, "a-probe")))) return;
+	await rm(join(root, "a-probe"));
+
+	// Hold the cwd boundary so the rename computes its lock keys (a, a/x,
+	// b, b/y chains) and then blocks on acquisition. While it waits, swap a
+	// for a symlink to b so the keys a and b converge on one queue slot;
+	// acquiring them nested would wait on the operation's own slot forever.
+	let releaseBoundary;
+	const boundaryHeld = new Promise((resolve) => {
+		releaseBoundary = resolve;
+	});
+	const hold = withFileMutationQueue(root, async () => {
+		await boundaryHeld;
+	});
+	await new Promise((resolve) => setImmediate(resolve));
+	const rename = call(
+		"rename",
+		{ source: "a/x", destination: "b/y", overwrite: true },
+		root,
+	);
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	await rm(join(root, "a"), { recursive: true, force: true });
+	await symlink("b", join(root, "a"));
+	releaseBoundary();
+	await hold;
+
+	await assert.rejects(
+		Promise.race([
+			rename,
+			new Promise((_, reject) => {
+				const timer = setTimeout(
+					() => reject(new Error("mutation queue deadlocked")),
+					1000,
+				);
+				timer.unref?.();
+			}),
+		]),
+		/converged while waiting for mutation locks|changed while waiting/i,
+	);
+});
+
 test("active cwd protection follows real paths but permits unlinking its alias", async () => {
 	const root = await tempRoot();
 	const cwdAlias = join(root, "cwd-alias");
