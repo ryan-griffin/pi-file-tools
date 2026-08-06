@@ -259,7 +259,7 @@ export function registerCopy(pi: ExtensionAPI): void {
 					content: [
 						{
 							type: "text",
-							text: `Copied ${source} to ${destination}${params.overwrite ? " (overwriting destination)" : ""}.`,
+							text: `Copied ${source} to ${destination}${destinationExists ? " (overwriting destination)" : ""}.`,
 						},
 					],
 					details: {

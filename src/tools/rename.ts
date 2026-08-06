@@ -179,7 +179,7 @@ export function registerRename(pi: ExtensionAPI): void {
 					content: [
 						{
 							type: "text",
-							text: `Renamed ${source} to ${destination}${params.overwrite ? " (overwriting destination)" : ""}.`,
+							text: `Renamed ${source} to ${destination}${destinationExists ? " (overwriting destination)" : ""}.`,
 						},
 					],
 					details: {
