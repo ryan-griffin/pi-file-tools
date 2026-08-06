@@ -94,11 +94,11 @@ async function renameWithOverwrite(
 		} catch (cleanupError) {
 			failure = failure
 				? new Error(
-						`${messageFor(failure)}; unable to clean up rename backup: ${messageFor(cleanupError)}.`,
+						`${messageFor(failure)}; unable to clean up rename backup at ${backupDirectory}: ${messageFor(cleanupError)}.`,
 						{ cause: failure },
 					)
 				: new Error(
-						`Rename completed but the temporary backup could not be cleaned up: ${messageFor(cleanupError)}.`,
+						`Rename completed but the temporary backup at ${backupDirectory} could not be cleaned up: ${messageFor(cleanupError)}.`,
 						{ cause: cleanupError },
 					);
 		}
