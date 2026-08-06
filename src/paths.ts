@@ -75,12 +75,12 @@ export async function canonicalPath(path: string): Promise<string> {
 	for (;;) {
 		try {
 			const resolved = await realpath(current);
-			return resolve(resolved, ...suffix.reverse());
+			return resolve(resolved, ...suffix.toReversed());
 		} catch (error) {
 			if (!isNodeError(error, "ENOENT") && !isNodeError(error, "ENOTDIR"))
 				throw error;
 			const parent = dirname(current);
-			if (parent === current) return resolve(current, ...suffix.reverse());
+			if (parent === current) return resolve(current, ...suffix.toReversed());
 			suffix.push(basename(current));
 			current = parent;
 		}
@@ -161,6 +161,13 @@ async function mutationQueueKey(path: string): Promise<string> {
 	}
 }
 
+/** Code-point total order for mutation-lock keys: locale-independent. */
+function compareLockKeys(a: string, b: string): number {
+	if (a < b) return -1;
+	if (a > b) return 1;
+	return 0;
+}
+
 export async function mutation<T>(
 	paths: string[],
 	activeCwd: string,
@@ -180,7 +187,7 @@ export async function mutation<T>(
 			.map((path) => canonicalPath(path)),
 	);
 	const ordered = [...new Set(lockKeys.map(normalizeMutationKey))].sort(
-		(a, b) => (a < b ? -1 : a > b ? 1 : 0),
+		compareLockKeys,
 	);
 	const acquire = async (
 		index: number,
