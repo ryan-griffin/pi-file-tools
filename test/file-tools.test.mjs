@@ -205,6 +205,33 @@ test("delete handles files, links, empty/non-empty directories, and protections"
 	);
 });
 
+test("delete handles unreadable directories without raw permission noise", async () => {
+	const root = await tempRoot();
+	if (typeof process.geteuid === "function" && process.geteuid() === 0) return; // root bypasses permission checks; behavior is untestable
+	// An unreadable empty directory is still deletable: rmdir needs only
+	// write+execute on the parent, not read on the directory itself.
+	const empty = join(root, "locked-empty");
+	await mkdir(empty);
+	await chmod(empty, 0o000);
+	await call("delete", { path: "locked-empty" }, root);
+	await assert.rejects(stat(empty), { code: "ENOENT" });
+	// An unreadable non-empty directory gets the tool's own wording.
+	const full = join(root, "locked-full");
+	await mkdir(full);
+	await writeFile(join(full, "x"), "x");
+	await chmod(full, 0o000);
+	await rejects("delete", { path: "locked-full" }, root, "not empty");
+	// Recursive deletion cannot enumerate the tree; the raw permission error
+	// is accurate and nothing is partially deleted.
+	await rejects(
+		"delete",
+		{ path: "locked-full", recursive: true },
+		root,
+		"EACCES",
+	);
+	await chmod(full, 0o700); // restore so test cleanup can remove the root
+});
+
 test("delete refuses an ancestor containing the active cwd", async () => {
 	const parent = await tempRoot();
 	const child = join(parent, "child");

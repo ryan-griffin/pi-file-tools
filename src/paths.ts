@@ -315,3 +315,5 @@ export async function sameRealPath(
 		throw error;
 	}
 }
+
+export { isNodeError };
