@@ -525,7 +525,10 @@ test("rename and copy refuse kind-mismatched overwrites", async () => {
 
 	// Refusals leave both sides intact.
 	assert.equal(await readFile(join(root, "file"), "utf8"), "file");
-	assert.equal(await readFile(join(root, "dir", "precious"), "utf8"), "precious");
+	assert.equal(
+		await readFile(join(root, "dir", "precious"), "utf8"),
+		"precious",
+	);
 
 	// Same-kind replacement still works: directory over directory replaces
 	// the old tree wholesale with the new one.
@@ -550,8 +553,45 @@ test("rename and copy refuse kind-mismatched overwrites", async () => {
 			{ source: "link", destination: "other-file", overwrite: true },
 			root,
 		);
-		assert.equal((await lstat(join(root, "other-file"))).isSymbolicLink(), true);
+		assert.equal(
+			(await lstat(join(root, "other-file"))).isSymbolicLink(),
+			true,
+		);
 	}
+});
+
+test("results claim overwriting only when a destination was replaced", async () => {
+	const root = await tempRoot();
+	await writeFile(join(root, "src"), "src");
+
+	// overwrite: true with no existing destination: no overwrite happened.
+	const renamed = await call(
+		"rename",
+		{ source: "src", destination: "dst", overwrite: true },
+		root,
+	);
+	assert.doesNotMatch(renamed.content[0].text, /overwriting/i);
+	await writeFile(join(root, "dst2"), "old");
+	const renamedOver = await call(
+		"rename",
+		{ source: "dst", destination: "dst2", overwrite: true },
+		root,
+	);
+	assert.match(renamedOver.content[0].text, /overwriting destination/i);
+
+	await writeFile(join(root, "csrc"), "csrc");
+	const copied = await call(
+		"copy",
+		{ source: "csrc", destination: "cdst", overwrite: true },
+		root,
+	);
+	assert.doesNotMatch(copied.content[0].text, /overwriting/i);
+	const copiedOver = await call(
+		"copy",
+		{ source: "csrc", destination: "cdst", overwrite: true },
+		root,
+	);
+	assert.match(copiedOver.content[0].text, /overwriting destination/i);
 });
 
 test("copy staging preserves an existing destination when a socket cannot be copied", async () => {
