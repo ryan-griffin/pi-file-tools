@@ -21,6 +21,7 @@ import {
 	isPathAncestor,
 	mutation,
 	pathExists,
+	protectedDeleteReason,
 	resolveToolCwd,
 	resolveToolPath,
 	sameRealPath,
@@ -158,12 +159,15 @@ export function registerCopy(pi: ExtensionAPI): void {
 					throw new Error("Copying a directory requires recursive: true.");
 				}
 				const destinationExists = await pathExists(destination);
-				if (
-					destinationExists &&
-					params.overwrite &&
-					(await isPathAncestor(destination, source))
-				) {
-					throw new Error("Cannot overwrite an ancestor of the source.");
+				if (destinationExists && params.overwrite) {
+					const protection = await protectedDeleteReason(destination, cwd);
+					if (protection)
+						throw new Error(
+							`Refusing to overwrite ${protection}: ${destination}.`,
+						);
+					if (await isPathAncestor(destination, source)) {
+						throw new Error("Cannot overwrite an ancestor of the source.");
+					}
 				}
 				if (destinationExists && !params.overwrite) {
 					throw new Error(
