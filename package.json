@@ -20,12 +20,10 @@
 	},
 	"scripts": {
 		"check": "biome check",
+		"check:fix": "biome check --write",
 		"format": "biome format --write",
-		"lint": "biome lint",
 		"typecheck": "tsc --noEmit",
-		"test": "npx tsx --test test/*.test.mjs",
-		"test:smoke": "node test/smoke.mjs",
-		"precommit": "npm run typecheck && npm run check && npm run test"
+		"test": "node test/smoke.mjs && tsx --test test/*.test.mjs"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": ">=0.82.1",
