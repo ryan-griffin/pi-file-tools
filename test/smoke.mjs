@@ -43,6 +43,7 @@ for (const name of ["rename", "delete", "copy", "mkdir"]) {
 assert.equal((source.match(/registerTool\(/g) ?? []).length, 4);
 assert.equal((source.match(/additionalProperties:\s*false/g) ?? []).length, 4);
 assert.equal((source.match(/promptSnippet:/g) ?? []).length, 4);
+assert.equal((source.match(/promptGuidelines:/g) ?? []).length, 4);
 assert.ok(source.includes('from "typebox"'));
 assert.ok(source.includes("withFileMutationQueue"));
 assert.ok(source.includes('from "node:fs/promises"'));

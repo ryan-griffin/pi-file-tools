@@ -103,6 +103,10 @@ export function registerRename(pi: ExtensionAPI): void {
 			"Rename or move a file, symlink, or directory. Parent directories are not created; existing destinations require overwrite: true.",
 		promptSnippet:
 			"Rename or move a file or directory; overwrite: true is required to replace a destination",
+		promptGuidelines: [
+			"Existing destinations require overwrite: true; replacing a directory with a file or symlink (or vice versa) is refused.",
+			"Parent directories are never created; use mkdir first when the destination parent is missing.",
+		],
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
 			return withLockedSourceDestination(
