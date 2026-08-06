@@ -91,12 +91,7 @@ function messageFor(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-function combinedFailure(operation: unknown, cleanup: unknown): Error {
-	return new Error(
-		`${messageFor(operation)}; unable to clean up temporary copy: ${messageFor(cleanup)}.`,
-		{ cause: operation },
-	);
-}
+type CleanupTarget = { path: string | undefined; label: string };
 
 async function cleanupTemporary(path: string): Promise<unknown> {
 	try {
@@ -107,22 +102,32 @@ async function cleanupTemporary(path: string): Promise<unknown> {
 	}
 }
 
+function copyCleanupTargets(
+	temporaryDirectory: string | undefined,
+	backupDirectory: string | undefined,
+): CleanupTarget[] {
+	return [
+		{ path: temporaryDirectory, label: "staging directory" },
+		{ path: backupDirectory, label: "backup directory" },
+	];
+}
+
 async function cleanupTemporaryPaths(
-	paths: (string | undefined)[],
-): Promise<Array<{ path: string; error: unknown }>> {
-	const results: Array<{ path: string; error: unknown }> = [];
-	for (const path of paths) {
+	targets: CleanupTarget[],
+): Promise<Array<{ path: string; label: string; error: unknown }>> {
+	const results: Array<{ path: string; label: string; error: unknown }> = [];
+	for (const { path, label } of targets) {
 		if (path === undefined) continue;
-		results.push({ path, error: await cleanupTemporary(path) });
+		results.push({ path, label, error: await cleanupTemporary(path) });
 	}
 	return results;
 }
 
 function describeCleanupFailures(
-	failures: Array<{ path: string; error: unknown }>,
+	failures: Array<{ path: string; label: string; error: unknown }>,
 ): string {
 	return failures
-		.map(({ path, error }) => `${path}: ${messageFor(error)}`)
+		.map(({ label, path, error }) => `${label} ${path}: ${messageFor(error)}`)
 		.join("; ");
 }
 
@@ -192,31 +197,29 @@ export function registerCopy(pi: ExtensionAPI): void {
 							await fsRename(staged, destination);
 						}
 					} catch (error) {
-						const cleanupResults = await cleanupTemporaryPaths([
-							temporaryDirectory,
-							backupDirectory,
-						]);
+						const cleanupResults = await cleanupTemporaryPaths(
+							copyCleanupTargets(temporaryDirectory, backupDirectory),
+						);
 						const failedCleanups = cleanupResults.filter(
 							(failure) => failure.error !== undefined,
 						);
 						if (failedCleanups.length > 0) {
-							throw combinedFailure(
-								error,
-								describeCleanupFailures(failedCleanups),
+							throw new Error(
+								`${messageFor(error)}; unable to clean up after the failed copy: ${describeCleanupFailures(failedCleanups)}.`,
+								{ cause: error },
 							);
 						}
 						throw error;
 					}
-					const cleanupResults = await cleanupTemporaryPaths([
-						temporaryDirectory,
-						backupDirectory,
-					]);
+					const cleanupResults = await cleanupTemporaryPaths(
+						copyCleanupTargets(temporaryDirectory, backupDirectory),
+					);
 					const cleanupFailures = cleanupResults.filter(
 						(failure) => failure.error !== undefined,
 					);
 					if (cleanupFailures.length > 0) {
 						throw new Error(
-							`Copy completed but the temporary copy could not be cleaned up: ${describeCleanupFailures(cleanupFailures)}.`,
+							`Copy completed but temporary files could not be cleaned up: ${describeCleanupFailures(cleanupFailures)}.`,
 							{ cause: cleanupFailures[0]?.error },
 						);
 					}
