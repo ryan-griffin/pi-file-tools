@@ -5,6 +5,7 @@ import {
 	assertPathUnchanged,
 	canonicalPath,
 	entryKind,
+	isNodeError,
 	mutation,
 	protectedDeleteReason,
 	resolveToolCwd,
@@ -54,15 +55,35 @@ export function registerDelete(pi: ExtensionAPI): void {
 				const stat = await lstat(target);
 				const isDirectory = stat.isDirectory();
 				if (isDirectory && !params.recursive) {
-					const entries = await readdir(target);
-					if (entries.length > 0)
+					let entries: string[] | undefined;
+					try {
+						entries = await readdir(target);
+					} catch (error) {
+						// An unreadable directory may still be deletable: rmdir needs
+						// only write+execute on the parent, not read on the directory
+						// itself. Fall through and let rmdir give the final answer.
+						if (!isNodeError(error, "EACCES") && !isNodeError(error, "EPERM"))
+							throw error;
+					}
+					if (entries !== undefined && entries.length > 0)
 						throw new Error(
 							"Directory is not empty; set recursive: true to delete it.",
 						);
 				}
 				throwIfAborted(signal);
 				if (isDirectory && !params.recursive) {
-					await rmdir(target);
+					try {
+						await rmdir(target);
+					} catch (error) {
+						// Either readdir raced with a concurrent write, or the empty
+						// check was skipped for an unreadable directory. Keep the
+						// tool's own wording instead of the raw kernel error.
+						if (isNodeError(error, "ENOTEMPTY") || isNodeError(error, "EEXIST"))
+							throw new Error(
+								"Directory is not empty; set recursive: true to delete it.",
+							);
+						throw error;
+					}
 				} else {
 					// fs.rm does not currently accept an AbortSignal. Check before the
 					// irreversible operation rather than attempting unsafe partial deletion.
