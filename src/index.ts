@@ -25,7 +25,8 @@ function registerPermissionExtractors(pi: ExtensionAPI): void {
 	// `session_start` and re-publishes on extension reload; registering from
 	// the readiness broadcast makes this robust to load order and `/reload`.
 	const disposers: Array<() => void> = [];
-	const registerWithPermissionSystem = (): void => {
+	let warnedAboutUnresolvable = false;
+	const registerWithPermissionSystem = (via: "startup" | "ready"): void => {
 		void import("@gotgenes/pi-permission-system")
 			.then(({ getPermissionsService }) => {
 				const permissions = getPermissionsService();
@@ -55,11 +56,22 @@ function registerPermissionExtractors(pi: ExtensionAPI): void {
 				register("copy");
 			})
 			.catch(() => {
-				// pi-permission-system not installed — nothing to integrate with.
+				// The permission system announced itself on `permissions:ready` but
+				// the package is not resolvable from this extension — a silent
+				// integration failure that leaves rename/copy ungated. Only the
+				// readiness path can distinguish this from "not installed at all".
+				if (via === "ready" && !warnedAboutUnresolvable) {
+					warnedAboutUnresolvable = true;
+					console.error(
+						"[pi-file-tools] the permission system broadcast `permissions:ready` but `@gotgenes/pi-permission-system` is not resolvable from this extension; rename/copy destination paths are NOT gated by permission policy",
+					);
+				}
 			});
 	};
-	pi.events?.on("permissions:ready", registerWithPermissionSystem);
-	registerWithPermissionSystem();
+	pi.events?.on("permissions:ready", () =>
+		registerWithPermissionSystem("ready"),
+	);
+	registerWithPermissionSystem("startup");
 }
 
 export default function piFileToolsExtension(pi: ExtensionAPI): void {
