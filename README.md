@@ -13,6 +13,10 @@ All paths are resolved relative to pi's active working directory. A leading `@` 
 
 Mutations use pi's `withFileMutationQueue`; each operation acquires its lexical and canonical ancestor chains (bounded by the active cwd when applicable) in deterministic order, so source/destination and parent traversals serialize safely. Lock keys are re-resolved as they are acquired; if a concurrent mutation redirects a parent so two keys converge on one queue slot, the operation fails explicitly instead of deadlocking.
 
+## Permission-system integration
+
+When the `@gotgenes/pi-permission-system` extension is installed, the `rename` and `copy` tools declare their destination paths to it (via `registerToolAccessExtractor` on the `permissions:ready` broadcast), so the cross-cutting `path` rules and the `external_directory` outside-CWD boundary apply to them like they do to the built-in file tools. `delete` and `mkdir` are covered by convention because their input is `input.path`. A single path is declared per tool — the destination — which is the path whose write crosses the working-directory boundary; the source path is not separately gated (`rename .env` out of a project is not caught by a source-path rule). Without the permission system installed, pi-file-tools works standalone and the registration is skipped.
+
 ## Development
 
 ```bash
