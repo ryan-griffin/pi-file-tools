@@ -24,17 +24,16 @@
 		"typecheck": "tsc --noEmit",
 		"test": "node test/smoke.mjs && tsx --test test/*.test.mjs"
 	},
+	"optionalDependencies": {
+		"@gotgenes/pi-permission-system": "^24.0.0"
+	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": ">=0.82.1",
 		"typebox": "*"
 	},
-	"peerDependenciesOptional": {
-		"@gotgenes/pi-permission-system": "^24.0.0"
-	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.6",
 		"@earendil-works/pi-coding-agent": "^0.83.0",
-		"@gotgenes/pi-permission-system": "^24.0.0",
 		"tsx": "^4.20.3",
 		"typescript": "^6.0.3"
 	}
