@@ -31,7 +31,10 @@ try {
 for (const file of sourceFiles)
 	assert.ok(readSource(file).length > 0, `${file} exists`);
 assert.deepEqual(packageJson.pi.extensions, ["./src/index.ts"]);
-assert.equal(packageJson.main, "./src/index.ts");
+assert.ok(
+	!("main" in packageJson),
+	"main is absent: exports and pi.extensions govern package loading",
+);
 assert.equal(packageJson.exports["."], "./src/index.ts");
 for (const name of ["rename", "delete", "copy", "mkdir"]) {
 	assert.equal(
