@@ -3,7 +3,6 @@
 	"version": "0.1.0",
 	"description": "Safe file and directory mutation tools for the pi coding agent",
 	"type": "module",
-	"main": "./src/index.ts",
 	"exports": {
 		".": "./src/index.ts"
 	},
