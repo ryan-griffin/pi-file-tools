@@ -23,8 +23,7 @@ When the `@gotgenes/pi-permission-system` extension is installed, the `rename` a
 npm install
 npm run typecheck
 npm run check
-npm run test
-npm run test:smoke
+npm run check:fix
 npm run format
-npm run precommit
+npm run test
 ```
