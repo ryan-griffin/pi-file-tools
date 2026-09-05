@@ -44,8 +44,8 @@ export async function withLockedTarget<T>(
  * against the tool cwd, acquire the mutation queue for their lexical and
  * canonical ancestor chains, re-verify that neither path was redirected
  * while waiting for the locks, then run the guards every source→destination
- * mutation needs (same-real-path, descendant, and the overwrite policy)
- * before handing the validated context to the body.
+ * mutation needs (move-source protection, same-real-path, descendant, and
+ * the overwrite policy) before handing the validated context to the body.
  */
 export async function withLockedSourceDestination<T>(
 	{
@@ -82,6 +82,17 @@ export async function withLockedSourceDestination<T>(
 		throwIfAborted(signal);
 		await assertPathUnchanged(source, expectedSource, "source");
 		await assertPathUnchanged(destination, expectedDestination, "destination");
+		if (op === "move") {
+			// A move deletes the source: refuse to move the filesystem root,
+			// the home directory, the active working directory, or any real
+			// directory containing them — mirroring delete's protection.
+			// Unlinking a symlink alias stays allowed (protectedDeleteReason
+			// returns undefined for links), since only the link moves.
+			const sourceProtection = await protectedDeleteReason(source, cwd);
+			if (sourceProtection) {
+				throw new Error(`Refusing to move ${sourceProtection}: ${source}.`);
+			}
+		}
 		const sourceStat = await lstat(source);
 		if (await sameRealPath(source, destination))
 			throw new Error("Source and destination must differ.");
