@@ -550,6 +550,64 @@ test("rename and copy refuse to overwrite protected destinations", async () => {
 	}
 });
 
+test("rename refuses to move protected sources", async () => {
+	const root = await tempRoot();
+	const cwd = join(root, "cwd");
+	await mkdir(cwd, { recursive: true });
+	await writeFile(join(cwd, "work"), "work");
+
+	// The active working directory itself and an ancestor holding it.
+	await rejects(
+		"rename",
+		{ source: cwd, destination: join(root, "moved") },
+		cwd,
+		"active working directory",
+	);
+	await rejects(
+		"rename",
+		{ source: root, destination: join(root, "moved") },
+		cwd,
+		"ancestor",
+	);
+	// The filesystem root and the home directory.
+	await rejects(
+		"rename",
+		{ source: "/", destination: join(root, "moved") },
+		cwd,
+		"filesystem root",
+	);
+	await rejects(
+		"rename",
+		{ source: homedir(), destination: join(root, "moved") },
+		cwd,
+		"home directory",
+	);
+	// Refusals leave the protected sources untouched.
+	assert.equal(await readFile(join(cwd, "work"), "utf8"), "work");
+
+	// Moving a symlink that points at the active cwd stays allowed: only the
+	// link moves, leaving the real directory intact.
+	const cwdAlias = join(root, "cwd-alias");
+	if (await trySymlink(cwd, cwdAlias)) {
+		await call(
+			"rename",
+			{ source: cwdAlias, destination: join(root, "alias-moved") },
+			root,
+		);
+		assert.equal(await readFile(join(cwd, "work"), "utf8"), "work");
+		assert.equal(await readlink(join(root, "alias-moved")), cwd);
+	}
+
+	// Ordinary moves inside the cwd still work.
+	await writeFile(join(cwd, "a"), "a");
+	await call(
+		"rename",
+		{ source: join(cwd, "a"), destination: join(cwd, "b") },
+		cwd,
+	);
+	assert.equal(await readFile(join(cwd, "b"), "utf8"), "a");
+});
+
 test("rename and copy refuse kind-mismatched overwrites", async () => {
 	const root = await tempRoot();
 	await writeFile(join(root, "file"), "file");
