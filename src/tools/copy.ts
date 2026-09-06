@@ -1,18 +1,8 @@
-import {
-	chmod,
-	copyFile,
-	mkdir as fsMkdir,
-	rename as fsRename,
-	lstat,
-	mkdtemp,
-	readdir,
-	readlink,
-	rm,
-	symlink,
-} from "node:fs/promises";
+import { rename as fsRename, mkdtemp, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
+import { copyEntry } from "../copy-entry.js";
 import { entryKind, throwIfAborted } from "../paths.js";
 import { withLockedSourceDestination } from "../shared.js";
 
@@ -45,47 +35,6 @@ const parameters = Type.Object(
 	{ additionalProperties: false },
 );
 type Params = Static<typeof parameters>;
-
-async function copyEntry(
-	source: string,
-	destination: string,
-	recursive: boolean,
-	signal: AbortSignal | undefined,
-): Promise<void> {
-	throwIfAborted(signal);
-	const sourceStat = await lstat(source);
-	if (sourceStat.isSymbolicLink()) {
-		const target = await readlink(source);
-		throwIfAborted(signal);
-		await symlink(target, destination);
-		return;
-	}
-	if (sourceStat.isDirectory()) {
-		if (!recursive)
-			throw new Error("Copying a directory requires recursive: true.");
-		throwIfAborted(signal);
-		await fsMkdir(destination);
-		for (const entry of await readdir(source)) {
-			throwIfAborted(signal);
-			await copyEntry(
-				join(source, entry),
-				join(destination, entry),
-				recursive,
-				signal,
-			);
-		}
-		throwIfAborted(signal);
-		await chmod(destination, sourceStat.mode & 0o7777);
-		return;
-	}
-	if (!sourceStat.isFile()) {
-		throw new Error(`Cannot copy special filesystem entry: ${source}.`);
-	}
-	throwIfAborted(signal);
-	await copyFile(source, destination);
-	throwIfAborted(signal);
-	await chmod(destination, sourceStat.mode & 0o7777);
-}
 
 function messageFor(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
