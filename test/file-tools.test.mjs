@@ -147,7 +147,7 @@ test("rename moves files and directories and guards destinations", async () => {
 	);
 });
 
-test("rename overwrite preserves the destination when a cross-device move fails", async () => {
+test("rename moves files across devices with and without overwrite", async (t) => {
 	let sourceRoot;
 	try {
 		sourceRoot = await mkdtemp(join("/dev/shm", "pi-file-tools-"));
@@ -156,25 +156,35 @@ test("rename overwrite preserves the destination when a cross-device move fails"
 			error.code === "ENOENT" ||
 			error.code === "EACCES" ||
 			error.code === "EPERM"
-		)
+		) {
+			t.skip("/dev/shm is unavailable");
 			return;
+		}
 		throw error;
 	}
 	temporaryRoots.add(sourceRoot);
 	const destinationRoot = await tempRoot();
-	if ((await stat(sourceRoot)).dev === (await stat(destinationRoot)).dev)
+	if ((await stat(sourceRoot)).dev === (await stat(destinationRoot)).dev) {
+		t.skip("/dev/shm and the temp directory are on the same device");
 		return;
+	}
 
-	const source = join(sourceRoot, "source");
-	const destination = join(destinationRoot, "destination");
-	await writeFile(source, "new");
-	await writeFile(destination, "old");
-	await assert.rejects(
-		call("rename", { source, destination, overwrite: true }, destinationRoot),
-		(error) => error.code === "EXDEV",
-	);
-	assert.equal(await readFile(source, "utf8"), "new");
-	assert.equal(await readFile(destination, "utf8"), "old");
+	for (const overwrite of [false, true]) {
+		const source = join(sourceRoot, `source-${overwrite}`);
+		const destination = join(destinationRoot, `destination-${overwrite}`);
+		await writeFile(source, "new");
+		await chmod(source, 0o640);
+		if (overwrite) await writeFile(destination, "old");
+		const result = await call(
+			"rename",
+			{ source, destination, overwrite },
+			destinationRoot,
+		);
+		assert.equal(result.details.kind, "file");
+		assert.equal(await readFile(destination, "utf8"), "new");
+		assert.equal((await stat(destination)).mode & 0o7777, 0o640);
+		await assert.rejects(lstat(source), { code: "ENOENT" });
+	}
 });
 
 test("delete handles files, links, empty/non-empty directories, and protections", async () => {

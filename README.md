@@ -11,6 +11,12 @@ All paths are resolved relative to pi's active working directory. A leading `@` 
 - **`copy`** copies a regular file, symlink, or directory to the exact destination while preserving symlinks and source permission bits. Special filesystem entries are rejected. Directories require `recursive: true`, and existing destinations require `overwrite: true` (refused for the same protected destinations and kind-mismatched replacements as `rename`). Overwrites are staged in a temporary sibling and swapped only after the copy succeeds, preserving the old destination if staging fails. Abort signals are checked before mutation and between recursive entries.
 - **`mkdir`** creates a directory and missing parents by default (`recursive: true`). It reports whether the directory was newly created or already existed and rejects an existing non-directory.
 
+Cross-device `rename` falls back to a staged copy followed by source deletion. It preserves symlinks and permission bits using the same copier as `copy`; special filesystem entries are rejected. It does not preserve ownership, timestamps, ACLs, extended attributes, or hard-link relationships.
+
+Copy or publication failures leave the source intact and restore an overwritten destination when rollback succeeds. If rollback fails, the error names the retained destination backup. Once the copy is published, a source-deletion failure or cancellation keeps the complete destination and reports whether source deletion started. Backup cleanup failure after publication leaves the source intact.
+
+Cross-device moves are not atomic, and recursive source deletion cannot be cancelled once it starts. Keep the source tree idle during the move. The mutation queue coordinates cooperating pi tools, not external writers; changes made externally after copying can be lost when the source is deleted.
+
 Mutations use pi's `withFileMutationQueue`; each operation acquires its lexical and canonical ancestor chains (bounded by the active cwd when applicable) in deterministic order, so source/destination and parent traversals serialize safely. Lock keys are re-resolved as they are acquired; if a concurrent mutation redirects a parent so two keys converge on one queue slot, the operation fails explicitly instead of deadlocking.
 
 ## Permission-system integration

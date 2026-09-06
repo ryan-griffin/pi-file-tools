@@ -2,7 +2,8 @@ import { rename as fsRename, mkdtemp, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
-import { entryKind, throwIfAborted } from "../paths.js";
+import { copyEntry } from "../copy-entry.js";
+import { entryKind, isNodeError, throwIfAborted } from "../paths.js";
 import { withLockedSourceDestination } from "../shared.js";
 
 const parameters = Type.Object(
@@ -39,17 +40,18 @@ async function renameWithOverwrite(
 	destination: string,
 	destinationExists: boolean,
 	signal: AbortSignal | undefined,
+	onPublished?: () => void,
 ): Promise<void> {
 	throwIfAborted(signal);
 	if (!destinationExists) {
 		await fsRename(source, destination);
+		onPublished?.();
 		return;
 	}
 
 	const backupDirectory = await mkdtemp(
 		join(dirname(destination), ".pi-file-tools-rename-"),
 	);
-	throwIfAborted(signal);
 	const backup = join(backupDirectory, basename(destination));
 	let failure: unknown;
 	let keepBackup = false;
@@ -72,6 +74,7 @@ async function renameWithOverwrite(
 			}
 			if (!failure) failure = moveError;
 		}
+		if (!failure) onPublished?.();
 	} catch (error) {
 		failure = error;
 	}
@@ -95,6 +98,58 @@ async function renameWithOverwrite(
 	if (failure) throw failure;
 }
 
+/** Stage on the destination device before publishing or deleting any source data. */
+async function moveAcrossDevices(
+	source: string,
+	destination: string,
+	destinationExists: boolean,
+	signal: AbortSignal | undefined,
+): Promise<void> {
+	throwIfAborted(signal);
+	const stagingDirectory = await mkdtemp(
+		join(dirname(destination), ".pi-file-tools-move-"),
+	);
+	let published = false;
+	let removingSource = false;
+	let failure: unknown;
+	try {
+		const staged = join(stagingDirectory, basename(destination));
+		await copyEntry(source, staged, true, signal);
+		throwIfAborted(signal);
+		await renameWithOverwrite(
+			staged,
+			destination,
+			destinationExists,
+			signal,
+			() => {
+				published = true;
+			},
+		);
+		// Once source deletion begins it can fail partway through a tree. Never
+		// roll back the complete destination, which may now be the only copy.
+		throwIfAborted(signal);
+		removingSource = true;
+		await rm(source, { recursive: true, force: false });
+	} catch (error) {
+		failure = published
+			? new Error(
+					`Cross-device move copied to ${destination}, but did not finish; the complete destination was kept and source ${source} ${removingSource ? "may remain partially or entirely" : "was left intact"}: ${messageFor(error)}.`,
+					{ cause: error },
+				)
+			: error;
+	}
+
+	try {
+		await rm(stagingDirectory, { recursive: true, force: false });
+	} catch (cleanupError) {
+		failure = new Error(
+			`${failure ? messageFor(failure) : "Cross-device move completed"}; unable to clean up staging directory at ${stagingDirectory}: ${messageFor(cleanupError)}.`,
+			{ cause: failure ?? cleanupError },
+		);
+	}
+	if (failure) throw failure;
+}
+
 export function registerRename(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "rename",
@@ -106,6 +161,7 @@ export function registerRename(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Existing destinations require overwrite: true; replacing a directory with a file or symlink (or vice versa) is refused.",
 			"Parent directories are never created; use mkdir first when the destination parent is missing.",
+			"Cross-device moves copy before deleting the source and are not atomic; symlinks and permission bits are preserved, but special filesystem entries are refused.",
 		],
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
@@ -120,12 +176,22 @@ export function registerRename(pi: ExtensionAPI): void {
 				},
 				async ({ source, destination, sourceStat, destinationExists }) => {
 					throwIfAborted(signal);
-					await renameWithOverwrite(
-						source,
-						destination,
-						destinationExists,
-						signal,
-					);
+					try {
+						await renameWithOverwrite(
+							source,
+							destination,
+							destinationExists,
+							signal,
+						);
+					} catch (error) {
+						if (!isNodeError(error, "EXDEV")) throw error;
+						await moveAcrossDevices(
+							source,
+							destination,
+							destinationExists,
+							signal,
+						);
+					}
 					return {
 						content: [
 							{

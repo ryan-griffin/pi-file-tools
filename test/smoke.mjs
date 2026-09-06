@@ -12,6 +12,7 @@ const sourceFiles = [
 	"src/tools/copy.ts",
 	"src/tools/mkdir.ts",
 	"src/shared.ts",
+	"src/copy-entry.ts",
 ];
 function readSource(file) {
 	try {
